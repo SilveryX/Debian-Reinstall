@@ -18,7 +18,7 @@ command_exists() {
 }
 
 # Sets variable:
-late_command=
+in_target_script=
 in_target() {
     local command=
 
@@ -27,8 +27,8 @@ in_target() {
     done
 
     if [ -n "$command" ]; then
-        [ -z "$late_command" ] && late_command='true'
-        late_command="$late_command;$command"
+        [ -z "$in_target_script" ] && in_target_script='true'
+        in_target_script="$in_target_script;$command"
     fi
 }
 
@@ -111,10 +111,10 @@ set_mirror_proxy() {
 
 set_security_archive() {
     case $suite in
-        stretch|oldoldstable|buster|oldstable)
+        buster|oldoldstable)
             security_archive="$suite/updates"
             ;;
-        bullseye|stable|bookworm|testing)
+        bullseye|oldstable|bookworm|stable|trixie|testing)
             security_archive="$suite-security"
             ;;
         sid|unstable)
@@ -127,10 +127,10 @@ set_security_archive() {
 
 set_daily_d_i() {
     case $suite in
-        stretch|oldoldstable|buster|oldstable|bullseye|stable)
+        buster|oldoldstable|bullseye|oldstable|bookworm|stable)
             daily_d_i=false
             ;;
-        bookworm|testing|sid|unstable)
+        trixie|testing|sid|unstable)
             daily_d_i=true
             ;;
         *)
@@ -146,16 +146,16 @@ set_suite() {
 
 set_debian_version() {
     case $1 in
-        9|stretch|oldoldstable)
-            set_suite stretch
-            ;;
-        10|buster|oldstable)
+        10|buster|oldoldstable)
             set_suite buster
             ;;
-        11|bullseye|stable)
+        11|bullseye|oldstable)
             set_suite bullseye
             ;;
-        12|bookworm|testing)
+        12|bookworm|stable)
+            set_suite bookworm
+            ;;
+        13|trixie|testing)
             set_suite bookworm
             ;;
         sid|unstable)
@@ -168,14 +168,11 @@ set_debian_version() {
 
 has_cloud_kernel() {
     case $suite in
-        stretch|oldoldstable)
-            [ "$architecture" = amd64 ] && [ "$bpo_kernel" = true ] && return
-            ;;
-        buster|oldstable)
+        buster|oldoldstable)
             [ "$architecture" = amd64 ] && return
             [ "$architecture" = arm64 ] && [ "$bpo_kernel" = true ] && return
             ;;
-        bullseye|stable|bookworm|testing|sid|unstable)
+        bullseye|oldstable|bookworm|stable|trixie|testing|sid|unstable)
             [ "$architecture" = amd64 ] || [ "$architecture" = arm64 ] && return
     esac
 
@@ -187,7 +184,7 @@ has_cloud_kernel() {
 
 has_backports() {
     case $suite in
-        stretch|oldoldstable|buster|oldstable|bullseye|stable|bookworm|testing) return
+        buster|oldoldstable|bullseye|oldstable|bookworm|stable|trixie|testing) return
     esac
 
     warn "No backports kernel is available for $suite"
@@ -200,23 +197,24 @@ ip=
 netmask=
 gateway=
 dns='8.8.8.8 8.8.4.4'
+dns6='2001:4860:4860::8888 2001:4860:4860::8844'
 hostname=
 network_console=false
-set_debian_version 11
-mirror_protocol=http
+set_debian_version 12
+mirror_protocol=https
 mirror_host=deb.debian.org
 mirror_directory=/debian
 mirror_proxy=
-security_repository=http://security.debian.org/debian-security
+security_repository=mirror
 account_setup=true
 username=debian
 password=
 authorized_keys_url=
 sudo_with_password=false
 timezone=UTC
-ntp=0.debian.pool.ntp.org
+ntp=time.google.com
 disk_partitioning=true
-disk=
+disk="/dev/$(lsblk -no PKNAME "$(df /boot | grep -Eo '/dev/[a-z0-9]+')")"
 force_gpt=true
 efi=
 esp=106
@@ -225,7 +223,7 @@ kernel=
 cloud_kernel=false
 bpo_kernel=false
 install_recommends=true
-install='ca-certificates libpam-systemd'
+install=
 upgrade=
 kernel_params=
 force_lowmem=
@@ -238,20 +236,43 @@ firmware=false
 force_efi_extra_removable=true
 grub_timeout=5
 dry_run=false
+apt_non_free_firmware=true
+apt_non_free=false
+apt_contrib=false
+apt_src=true
+apt_backports=true
+cidata=
 
 while [ $# -gt 0 ]; do
     case $1 in
-        --cdn|--aws)
-            mirror_protocol=https
-            [ "$1" = '--aws' ] && mirror_host=cdn-aws.deb.debian.org
-            security_repository=mirror
+        --cdn)
             ;;
-        --china)
+        --aws)
+            mirror_host=cdn-aws.deb.debian.org
+            ntp=time.aws.com
+            ;;
+        --cloudflare)
+            dns='1.1.1.1 1.0.0.1'
+            dns6='2606:4700:4700::1111 2606:4700:4700::1001'
+            ntp=time.cloudflare.com
+            ;;
+        --aliyun)
             dns='223.5.5.5 223.6.6.6'
-            mirror_protocol=https
+            dns6='2400:3200::1 2400:3200:baba::1'
             mirror_host=mirrors.aliyun.com
-            ntp=ntp.aliyun.com
-            security_repository=mirror
+            ntp=time.amazonaws.cn
+            ;;
+        --ustc|--china)
+            dns='119.29.29.29'
+            dns6='2402:4e00::'
+            mirror_host=mirrors.ustc.edu.cn
+            ntp=time.amazonaws.cn
+            ;;
+        --tuna)
+            dns='119.29.29.29'
+            dns6='2402:4e00::'
+            mirror_host=mirrors.tuna.tsinghua.edu.cn
+            ntp=time.amazonaws.cn
             ;;
         --interface)
             interface=$2
@@ -271,6 +292,10 @@ while [ $# -gt 0 ]; do
             ;;
         --dns)
             dns=$2
+            shift
+            ;;
+        --dns6)
+            dns6=$2
             shift
             ;;
         --hostname)
@@ -385,6 +410,38 @@ while [ $# -gt 0 ]; do
         --bpo-kernel)
             bpo_kernel=true
             ;;
+        --apt-non-free-firmware)
+            apt_non_free_firmware=true
+            ;;
+        --apt-non-free)
+            apt_non_free=true
+            apt_contrib=true
+            ;;
+        --apt-contrib)
+            apt_contrib=true
+            ;;
+        --apt-src)
+            apt_src=true
+            ;;
+        --apt-backports)
+            apt_backports=true
+            ;;
+        --no-apt-non-free-firmware)
+            apt_non_free_firmware=false
+            ;;
+        --no-apt-non-free)
+            apt_non_free=false
+            ;;
+        --no-apt-contrib)
+            apt_contrib=false
+            apt_non_free=false
+            ;;
+        --no-apt-src)
+            apt_src=false
+            ;;
+        --no-apt-backports)
+            apt_backports=false
+            ;;
         --no-install-recommends)
             install_recommends=false
             ;;
@@ -434,6 +491,12 @@ while [ $# -gt 0 ]; do
         --dry-run)
             dry_run=true
             ;;
+        --cidata)
+            cidata=$(realpath "$2")
+            [ ! -f "$cidata/meta-data" ] && err 'No "meta-data" file found in the cloud-init directory'
+            [ ! -f "$cidata/user-data" ] && err 'No "user-data" file found in the cloud-init directory'
+            shift
+            ;;
         *)
             err "Unknown option: \"$1\""
     esac
@@ -467,6 +530,23 @@ done
 
 [ -n "$authorized_keys_url" ] && ! download "$authorized_keys_url" /dev/null &&
 err "Failed to download SSH authorized public keys from \"$authorized_keys_url\""
+
+non_free_firmware_available=false
+case $suite in
+    bookworm|stable|trixie|testing|sid|unstable)
+        non_free_firmware_available=true
+        ;;
+    *)
+        apt_non_free_firmware=false
+esac
+
+apt_components=main
+[ "$apt_contrib" = true ] && apt_components="$apt_components contrib"
+[ "$apt_non_free" = true ] && apt_components="$apt_components non-free"
+[ "$apt_non_free_firmware" = true ] && apt_components="$apt_components non-free-firmware"
+
+apt_services=updates
+[ "$apt_backports" = true ] && apt_services="$apt_services, backports"
 
 installer_directory="/boot/debian-$suite"
 
@@ -503,7 +583,7 @@ EOF
     echo "d-i netcfg/get_ipaddress string $ip" | $save_preseed
     [ -n "$netmask" ] && echo "d-i netcfg/get_netmask string $netmask" | $save_preseed
     [ -n "$gateway" ] && echo "d-i netcfg/get_gateway string $gateway" | $save_preseed
-    [ -z "${ip%%*:*}" ] && [ -n "${dns%%*:*}" ] && dns='2001:4860:4860::8888 2001:4860:4860::8844'
+    [ -z "${ip%%*:*}" ] && [ -n "${dns%%*:*}" ] && dns="$dns6"
     [ -n "$dns" ] && echo "d-i netcfg/get_nameservers string $dns" | $save_preseed
     echo 'd-i netcfg/confirm_static boolean true' | $save_preseed
 }
@@ -711,6 +791,7 @@ d-i partman-partitioning/confirm_write_new_label boolean true
 d-i partman/choose_partition select finish
 d-i partman/confirm boolean true
 d-i partman/confirm_nooverwrite boolean true
+d-i partman-lvm/device_remove_lvm boolean true
 EOF
 }
 
@@ -725,17 +806,24 @@ EOF
 
 [ "$security_repository" = mirror ] && security_repository=$mirror_protocol://$mirror_host${mirror_directory%/*}/debian-security
 
-# If not sid/unstable
-[ -n "$security_archive" ] && {
-    $save_preseed << EOF
+$save_preseed << EOF
 
 # Apt setup
 
-d-i apt-setup/services-select multiselect updates, backports
-d-i apt-setup/local0/repository string $security_repository $security_archive main
-d-i apt-setup/local0/source boolean true
+d-i apt-setup/contrib boolean $apt_contrib
+d-i apt-setup/non-free boolean $apt_non_free
+d-i apt-setup/enable-source-repositories boolean $apt_src
+d-i apt-setup/services-select multiselect $apt_services
 EOF
 
+[ "$non_free_firmware_available" = true ] && echo "d-i apt-setup/non-free-firmware boolean $apt_non_free_firmware" | $save_preseed
+
+# If not sid/unstable
+[ -n "$security_archive" ] && {
+    $save_preseed << EOF
+d-i apt-setup/local0/repository string $security_repository $security_archive $apt_components
+d-i apt-setup/local0/source boolean $apt_src
+EOF
 }
 
 $save_preseed << 'EOF'
@@ -744,6 +832,9 @@ $save_preseed << 'EOF'
 
 tasksel tasksel/first multiselect ssh-server
 EOF
+
+install="$install ca-certificates libpam-systemd"
+[ -n "$cidata" ] && install="$install cloud-init"
 
 [ -n "$install" ] && echo "d-i pkgsel/include string $install" | $save_preseed
 [ -n "$upgrade" ] && echo "d-i pkgsel/upgrade select $upgrade" | $save_preseed
@@ -774,7 +865,13 @@ EOF
 
 [ "$bbr" = true ] && in_target '{ echo "net.core.default_qdisc=fq"; echo "net.ipv4.tcp_congestion_control=bbr"; } > /etc/sysctl.d/bbr.conf'
 
-[ -n "$late_command" ] && echo "d-i preseed/late_command string in-target sh -c '$late_command'" | $save_preseed
+[ -n "$cidata" ] && in_target 'echo "{ datasource_list: [ NoCloud ], datasource: { NoCloud: { fs_label: ~ } } }" > /etc/cloud/cloud.cfg.d/99_debi.cfg'
+
+late_command='true'
+[ -n "$in_target_script" ] && late_command="$late_command; in-target sh -c '$in_target_script'"
+[ -n "$cidata" ] && late_command="$late_command; mkdir -p /target/var/lib/cloud/seed/nocloud; cp -r /cidata/. /target/var/lib/cloud/seed/nocloud/"
+
+echo "d-i preseed/late_command string $late_command" | $save_preseed
 
 [ "$power_off" = true ] && echo 'd-i debian-installer/exit/poweroff boolean true' | $save_preseed
 
@@ -792,6 +889,12 @@ save_grub_cfg='cat'
     gzip -d initrd.gz
     # cpio reads a list of file names from the standard input
     echo preseed.cfg | cpio -o -H newc -A -F initrd
+
+    if [ -n "$cidata" ]; then
+        cp -r "$cidata" cidata
+        find cidata | cpio -o -H newc -A -F initrd
+    fi
+
     gzip -1 initrd
 
     mkdir -p /etc/default/grub.d
@@ -812,9 +915,19 @@ EOF
         # shellcheck disable=SC2016
         echo 'zz_debi=/etc/default/grub.d/zz-debi.cfg; if [ -f "$zz_debi" ]; then . "$zz_debi"; fi' >> /etc/default/grub
         grub_cfg=/boot/grub2/grub.cfg
+        [ -d /sys/firmware/efi ] && grub_cfg=/boot/efi/EFI/*/grub.cfg
         grub2-mkconfig -o "$grub_cfg"
+    elif command_exists grub-mkconfig; then
+        tmp=$(mktemp)
+        grep -vF zz_debi /etc/default/grub > "$tmp"
+        cat "$tmp" > /etc/default/grub
+        rm "$tmp"
+        # shellcheck disable=SC2016
+        echo 'zz_debi=/etc/default/grub.d/zz-debi.cfg; if [ -f "$zz_debi" ]; then . "$zz_debi"; fi' >> /etc/default/grub
+        grub_cfg=/boot/grub/grub.cfg
+        grub-mkconfig -o "$grub_cfg"
     else
-        err 'Could not find "update-grub" or "grub2-mkconfig" command'
+        err 'Could not find "update-grub" or "grub2-mkconfig" or "grub-mkconfig" command'
     fi
 
     save_grub_cfg="tee -a $grub_cfg"
